@@ -1,1 +1,35 @@
-<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>工具作品集</title></head><body style="font-family:sans-serif;padding:2rem"><h1>工具作品集</h1><p>由 WorkBuddy 发布，内容即将上线（首次发布真实报告时会覆盖本页）。</p></body></html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>工具箱 · 投研自助工具集</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1 id="siteTitle">工具箱</h1>
+      <p id="siteSub" class="sub">投研 / 量化 / 数据 自助工具集</p>
+      <div class="search">
+        <input id="q" type="search" placeholder="搜索工具名称或标签…" autocomplete="off">
+      </div>
+    </div>
+  </header>
+
+  <nav class="cats" id="catNav"><div class="wrap" id="catNavInner"></div></nav>
+
+  <main class="wrap" id="main">
+    <div id="loading" class="loading">正在加载工具目录…</div>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <span id="footUpdated"></span>
+      <span class="muted">· 新增工具只需在 catalog.json 追加一条，首页自动呈现</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
