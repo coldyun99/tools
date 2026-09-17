@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>期货升贴水与历史分位监控</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">基</span>
+    <div>
+      <h1>期货升贴水 &amp; 历史分位</h1>
+      <p id="subTitle">全品种 · 全合约 · 3年/5年双窗口</p>
+    </div>
+  </div>
+  <div class="top-right">
+    <div class="srcbox" id="srcBox" title="数据源状态">
+      <span class="dot" id="srcDot"></span>
+      <span id="srcText">加载中…</span>
+    </div>
+    <button class="btn" id="btnBack" hidden>‹ 返回概览</button>
+    <button class="btn" id="btnRefresh" title="重新拉取实时行情">刷新行情</button>
+    <button class="btn btn-primary" id="btnUpdate">数据更新</button>
+  </div>
+</header>
+
+<section class="toolbar">
+  <div class="filters">
+    <div class="fgroup">
+      <label>交易所</label>
+      <div class="chips" id="exChips"></div>
+    </div>
+    <div class="fgroup">
+      <label>品种</label>
+      <select id="prodSel"><option value="">全部品种</option></select>
+    </div>
+    <div class="fgroup grow">
+      <label>搜索</label>
+      <input id="search" type="search" placeholder="合约代码 / 品种名，如 AG2612 / 沪银" autocomplete="off">
+    </div>
+  </div>
+  <div class="filters">
+    <div class="fgroup">
+      <label>基准合约</label>
+      <div class="seg" id="baseSeg">
+        <button data-v="main" class="on">主力（持仓量最大）</button>
+        <button data-v="near">最近交割月</button>
+      </div>
+    </div>
+    <div class="fgroup">
+      <label>历史窗口</label>
+      <div class="seg" id="winSeg">
+        <button data-v="3" class="on">3 年</button>
+        <button data-v="5">5 年</button>
+        <button data-v="c">对比</button>
+      </div>
+    </div>
+    <div class="fgroup">
+      <label>显示</label>
+      <div class="seg" id="hideSeg">
+        <button data-v="all" class="on">全部合约</button>
+        <button data-v="liq">仅活跃</button>
+        <button data-v="has">仅有效分位</button>
+      </div>
+    </div>
+    <label class="chk"><input type="checkbox" id="autoRefresh" checked> 自动刷新(60s)</label>
+    <button class="btn" id="btnExport" title="导出当前表格为 CSV">导出 CSV</button>
+  </div>
+</section>
+
+<div class="kpis" id="kpis"></div>
+
+<section class="ib" id="ibBox">
+  <div class="ib-head">
+    <h2>股指期货期现基差 <small>期货 − 现货指数，按剩余自然日年化 · 分位基于同源历史序列</small></h2>
+    <div class="ib-act">
+      <span class="ib-spot" id="ibSpot"></span>
+      <button class="btn tiny" id="ibRefresh">重算</button>
+      <button class="btn tiny" id="ibToggle">收起</button>
+    </div>
+  </div>
+  <div class="ib-body" id="ibBody"><div class="loading">加载中…</div></div>
+</section>
+
+<main>
+  <div class="tablecard">
+    <div class="th-wrap">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th data-k="symbol" class="sortable">合约</th>
+            <th data-k="productName" class="sortable">品种</th>
+            <th data-k="exName" class="sortable">交易所</th>
+            <th data-k="last" class="num sortable">最新价</th>
+            <th data-k="spread" class="num sortable" title="该合约价格 − 主力价格（用户视角，正=该合约比主力贵）">对主力价差</th>
+            <th data-k="rate" class="num sortable" title="对主力价差率 = (该合约-主力)/主力">对主力价差率</th>
+            <th data-k="annual" class="num sortable" title="跨期年化：统一「远端-近端」/近端 × 12/月差。正值=contango（远月升水），负值=backwardation（远月贴水）。无论合约相对主力近或远，符号都可比">年化升水率<br><small>(远−近)</small></th>
+            <th data-k="p3" class="sortable">3年分位</th>
+            <th data-k="p5" class="sortable" id="thP5">5年分位</th>
+            <th data-k="n3" class="num sortable" title="参与分位计算的历史样本数">样本</th>
+            <th data-k="oi" class="num sortable">持仓量</th>
+            <th data-k="volume" class="num sortable">成交量</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="emptyBox" hidden></div>
+    <div class="tablefoot">
+      <span id="rowCount"></span>
+      <span class="legend">
+        分位：<i class="lg lo"></i>低 <i class="lg mid"></i>中 <i class="lg hi"></i>高　
+        <i class="lg base"></i>=基准合约　<i class="lg lowliq"></i>=流动性不足(不参与分位)
+      </span>
+    </div>
+  </div>
+</main>
+
+<!-- 详情抽屉 -->
+<div class="drawer-mask" id="mask" hidden></div>
+<aside class="drawer" id="drawer" hidden>
+  <div class="dhead">
+    <div>
+      <h2 id="dTitle">—</h2>
+      <p id="dSub">—</p>
+    </div>
+    <button class="x" id="dClose">×</button>
+  </div>
+  <div class="dwin" id="dWin">
+    <button data-v="3" class="on">3年</button>
+    <button data-v="5">5年</button>
+  </div>
+  <div class="dbody" id="dBody">
+    <div class="dstats" id="dStats"></div>
+    <div class="card">
+      <h3>① 当前升贴水在历史分布中的位置</h3>
+      <div id="chartHist"></div>
+      <p class="note">直方图为该品种「相同到期月差」的历史年化升水率分布，红色竖线为当前值所处位置。</p>
+    </div>
+    <div class="card">
+      <h3>② 历史年化升水率时间序列</h3>
+      <div id="chartSeries"></div>
+    </div>
+    <div class="card">
+      <h3>③ 该品种当前期限结构（各合约年化升水率）</h3>
+      <div id="chartCurve"></div>
+    </div>
+    <div class="card">
+      <h3>④ 明细</h3>
+      <div id="dTable"></div>
+    </div>
+  </div>
+</aside>
+
+<!-- 数据更新面板 -->
+<div class="modal-mask" id="upMask" hidden></div>
+<div class="modal" id="upModal" hidden>
+  <div class="mhead">
+    <h2>数据更新</h2>
+    <button class="x" id="upClose">×</button>
+  </div>
+  <div class="mbody">
+    <div class="msec">
+      <h3>① 实时行情（秒级）</h3>
+      <p>从数据源重新拉取全部合约最新价/持仓量/成交量，并立即重算分位。</p>
+      <div class="row">
+        <div class="seg" id="srcSeg">
+          <button data-v="sina" class="on">新浪（主源·实时）</button>
+          <button data-v="eastmoney">东财（备源·延时15分钟）</button>
+        </div>
+        <button class="btn btn-primary" id="doRefresh">立即刷新</button>
+      </div>
+    </div>
+    <div class="msec">
+      <h3>② 历史数据库（构建分位的基础）</h3>
+      <p>抓取全部品种全部合约的历史日K（含结算价与持仓量），用于计算历史分位。首次构建约需 2–5 分钟；此后为增量更新。</p>
+      <div class="row">
+        <label class="mini">回溯年数
+          <select id="buildYears"><option value="3">3 年</option><option value="5" selected>5 年</option><option value="7">7 年</option></select>
+        </label>
+        <label class="mini">并发
+          <select id="buildConc"><option>4</option><option selected>8</option><option>12</option><option>16</option></select>
+        </label>
+        <label class="chk"><input type="checkbox" id="buildForce"> 强制全量重建</label>
+        <button class="btn btn-primary" id="doBuild">开始构建</button>
+        <button class="btn" id="doStop" hidden>停止</button>
+      </div>
+      <div class="prog" id="prog" hidden>
+        <div class="pbar"><i id="pbarFill"></i></div>
+        <div class="ptext" id="ptext"></div>
+      </div>
+      <div class="logbox" id="buildLog" hidden></div>
+    </div>
+    <div class="msec">
+      <h3>③ 手动导入数据</h3>
+      <p>支持粘贴 CSV 或 JSON，导入后自动合并进历史库并重算分位。CSV 需含列：<code>date,contract,settle,close,volume,oi</code>。</p>
+      <div class="row">
+        <input type="file" id="importFile" accept=".csv,.json,.txt">
+        <button class="btn" id="doImport">导入</button>
+      </div>
+      <textarea id="importText" rows="6" placeholder="date,contract,settle,close,volume,oi&#10;2026-09-03,AG2612,16006,16010,107582,125420"></textarea>
+      <div id="importMsg" class="msg"></div>
+    </div>
+    <div class="msec">
+      <h3>④ 双数据源交叉校验</h3>
+      <p>同时向新浪与东财拉一次全市场行情并逐合约比对，用于确认报价可靠性。东财为延时约 15 分钟行情，活跃合约存在微小时间差属正常。</p>
+      <div class="row">
+        <button class="btn btn-primary" id="doVerify">开始校验</button>
+        <span id="verifyMsg" class="msg"></span>
+      </div>
+      <div id="verifyOut" class="verifyout"></div>
+    </div>
+    <div class="msec">
+      <h3>⑤ 历史库现状</h3>
+      <div id="dbStat" class="dbstat"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="chart.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
