@@ -1,28 +1,24 @@
-/* 期货升贴水监控 - 前端主逻辑（首页概览 + 品种详情双视图） */
+/* 期货升贴水监控 - 前端主逻辑（纯前端动态版：浏览器直连公开行情，实时计算）
+ * 数据层：lib/quote.js(拉行情) + lib/analytics.js(算升贴水/分位) + lib/instruments.js(品种表)
+ * 历史分位基准库 api/spreads/<CODE>.json（静态预建）+ 实时行情（东方财富，CORS*）=> 当前分位即"今天的价差在历史分布中的位置"。
+ */
 (function () {
   'use strict';
-  // 静态快照版编译开关：发布到 GitHub Pages 时置 true（无后端、无实时刷新）
-  const STATIC_MODE = true;
+  const I = window.Instruments, A = window.Analytics, Q = window.Quote;
   const $ = s => document.querySelector(s);
   const $$ = s => Array.prototype.slice.call(document.querySelectorAll(s));
+  const EX_ORDER = ['SHFE', 'DCE', 'CZCE', 'CFFEX', 'INE', 'GFEX'];
 
   const state = {
-    view: { mode: 'overview', product: null }, // overview=品种概览 | product=单品种合约明细
-    overview: [],       // /api/overview 返回的品种聚合数组
-    products: [],       // 当前视图的品种 basis 数组（概览模式为空；详情模式为该品种）
-    rows: [],           // 扁平化合约行（仅 product 视图填充）
-    meta: { quotesTs: 0, quotesSource: '', w3: 1095, w5: 1825 },
-    status: null,
-    prods: [],          // /api/products
+    view: { mode: 'overview', product: null },
+    overview: [], products: [], rows: [],
+    quotes: null, quoteMeta: null,
+    meta: { w3: 1095, w5: 1825 },
+    prods: [], summaries: null,
     filters: { ex: new Set(), product: '', q: '', base: 'main', win: '3', show: 'all' },
     sort: { key: 'annual', dir: 'desc' },
-    selected: null,
-    detail: null,
-    detailWin: '3',
-    autoTimer: null,
-    es: null,
-    loading: false,
-    ib: null,
+    selected: null, detail: null, detailWin: '3',
+    autoTimer: null, loading: false,
   };
 
   // ---------------- 工具 ----------------
@@ -41,122 +37,90 @@
   const fmtInt = v => (v == null || !isFinite(v)) ? '—' : Math.round(v).toLocaleString('zh-CN');
   const cls = v => v == null || !isFinite(v) ? 'na' : (v > 0 ? 'up' : v < 0 ? 'dn' : 'flat');
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function pad(ts) { return pad2(ts.getHours()) + ':' + pad2(ts.getMinutes()) + ':' + pad2(ts.getSeconds()); }
   function toast(msg, ms) {
     const t = $('#toast'); t.textContent = msg; t.hidden = false;
     clearTimeout(t._t); t._t = setTimeout(() => { t.hidden = true; }, ms || 2600);
   }
-  // 静态快照版：将 /api/* 映射到本地预生成的静态 JSON（无后端）
-  const _apiCache = new Map();
-  async function _fetchJson(rel) {
-    if (_apiCache.has(rel)) return _apiCache.get(rel);
-    const r = await fetch(rel);
-    const j = await r.json().catch(() => ({ ok: false, error: '解析失败: ' + rel }));
-    _apiCache.set(rel, j);
-    return j;
-  }
-  async function api(path, opts) {
-    const u = new URL(path, location.href);
-    const p = u.pathname.split('?')[0];
-    if (p === '/api/status') return _fetchJson('api/status.json');
-    if (p === '/api/products') return _fetchJson('api/products.json');
-    if (p === '/api/overview') return _fetchJson('api/overview.json');
-    if (p === '/api/basis') {
-      const code = (u.searchParams.get('products') || '').toUpperCase();
-      if (!code) throw new Error('静态快照版 /api/basis 需要 products 参数');
-      return _fetchJson('api/basis/' + code + '.json');
-    }
-    if (p === '/api/indexbasis') return _fetchJson('api/indexbasis.json');
-    if (p === '/api/detail') {
-      const product = (u.searchParams.get('product') || '').toUpperCase();
-      const contract = (u.searchParams.get('contract') || '').toUpperCase();
-      const dj = await _fetchJson('api/detail/' + product + '.json');
-      const item = dj && dj.items ? dj.items[contract] : null;
-      if (!item) throw new Error('未找到合约 ' + contract + ' 的明细（静态快照仅含已建库合约）');
-      return item;
-    }
-    throw new Error('静态快照版不支持该接口: ' + p);
-  }
-  const EX_ORDER = ['SHFE', 'DCE', 'CZCE', 'CFFEX', 'INE', 'GFEX'];
+  function setSrc(kind, text) { $('#srcDot').className = 'dot ' + kind; $('#srcText').textContent = text; }
 
-  // ---------------- 股指期现基差 ----------------
-  async function loadIndexBasis(rebuild) {
-    const body = $('#ibBody');
-    if (rebuild) body.innerHTML = '<div class="loading">正在重建历史基差序列…</div>';
-    try {
-      const j = await api('/api/indexbasis' + (rebuild ? '?build=1' : ''));
-      state.ib = j;
-      const ps = (j.products || []).filter(p => !p.error && p.rows && p.rows.length);
-      if (!ps.length) {
-        body.innerHTML = '<div class="loading">暂无数据（需先构建历史库）</div>';
-        return;
-      }
-      const spotTxt = ps.map(p => `${p.spotName} ${fmtPx(p.spot)}`).join('　');
-      $('#ibSpot').textContent = spotTxt + '　|　现货源 ' + (j.spotSource === 'tencent' ? '腾讯' : j.spotSource);
-      const win = state.filters.win === '5' ? 'p5' : 'p3';
-      const cmp = state.filters.win === 'c';
-      let html = '<div style="overflow-x:auto"><table class="ibtable"><thead><tr>' +
-        '<th>品种</th><th>合约</th><th>期货</th><th>现货</th><th>基差</th><th>年化基差率</th>' +
-        '<th>剩余天数</th><th>3年分位</th><th>5年分位</th><th>样本</th></tr></thead><tbody>';
-      ps.forEach((p, pi) => {
-        p.rows.forEach((r, ri) => {
-          html += `<tr class="${ri === 0 ? 'prod-start' : ''}">
-            <td class="pname-b">${ri === 0 ? esc(p.name) : ''}</td>
-            <td><span class="sym">${esc(r.symbol)}</span></td>
-            <td>${fmtPx(r.last)}</td>
-            <td class="dim">${fmtPx(p.spot)}</td>
-            <td class="${cls(r.basis)}">${r.basis > 0 ? '+' : ''}${fmtPx(r.basis)}</td>
-            <td class="${cls(r.annual)}"><b>${fmtPct(r.annual, 2, true)}</b></td>
-            <td class="dim">${r.days}</td>
-            <td>${pcell(r.p3, !cmp && win === 'p5')}</td>
-            <td>${pcell(r.p5, !cmp && win === 'p3')}</td>
-            <td class="dim">${r.n3}/${r.n5}</td>
-          </tr>`;
-        });
-      });
-      html += '</tbody></table></div>';
-      body.innerHTML = html;
-    } catch (e) {
-      body.innerHTML = '<div class="loading">加载失败: ' + esc(e.message) + '</div>';
-    }
+  // ---------------- 行情获取（带缓存） ----------------
+  async function ensureQuotes(silent) {
+    if (state.quotes) return;
+    setSrc('load', '拉取实时行情…');
+    const r = await Q.quotes();
+    state.quotes = r.data;
+    state.quoteMeta = { source: r.source, sourceName: r.sourceName, ts: r.ts, meta: r.meta };
   }
 
-  // ---------------- 双源校验 ----------------
-  async function doVerify() {
-    const msg = $('#verifyMsg'), out = $('#verifyOut');
-    msg.className = 'msg'; msg.textContent = '校验中…'; out.innerHTML = '';
-    try {
-      const j = await api('/api/verify');
-      msg.className = 'msg ok';
-      msg.textContent = `完成：双源均有报价 ${j.both} 个合约`;
-      const bad = j.bigCount === 0;
-      out.innerHTML = `<div class="vsum">
-          <div><span>新浪合约数</span><b>${j.sinaCount}</b></div>
-          <div><span>东财合约数</span><b>${j.emCount}</b></div>
-          <div><span>双源可比</span><b>${j.both}</b></div>
-          <div><span>平均绝对偏差</span><b>${j.avgDiff == null ? '—' : j.avgDiff.toFixed(4) + '%'}</b></div>
-          <div><span>偏差&gt;0.5%</span><b style="color:${bad ? 'var(--dn)' : 'var(--warn)'}">${j.bigCount}</b></div>
-        </div>
-        <div class="note" style="font-size:11.5px;color:var(--tx3);margin-bottom:6px">${esc(j.note)}</div>
-        ${j.big.length ? '<div class="vlist">' + j.big.map(x =>
-        `${x.symbol}　新浪 ${fmtPx(x.sina)}　东财 ${fmtPx(x.em)}　偏差 ${x.diff > 0 ? '+' : ''}${x.diff.toFixed(2)}%`).join('<br>') + '</div>'
-          : '<div style="color:var(--dn);font-size:12.5px">✓ 全部合约偏差均在 0.5% 以内，两源数据一致</div>'}`;
-    } catch (e) {
-      msg.className = 'msg err'; msg.textContent = '校验失败: ' + e.message;
+  // ---------------- 首页概览（轻量，用 summaries + 实时行情，不拉全量分位库） ----------------
+  function computeOverview(p, quotes, opts) {
+    const inst = I.BY_CODE[p.code];
+    if (!inst) return null;
+    const live = [];
+    Object.keys(quotes || {}).forEach(code => {
+      const pc = I.parseContract(code);
+      if (!pc || pc.product !== p.code) return;
+      const q = quotes[code]; if (!q || !(q.last > 0)) return;
+      live.push({ sym: code, ym: pc.year * 12 + pc.month, q: q });
+    });
+    if (!live.length) return {
+      code: p.code, name: p.name, ex: p.ex, exName: p.exName,
+      built: !!p.builtAt, hasLive: false, status: 'na', annual: null, farCount: 0, contractCount: 0,
+      baseSymbol: null, basePrice: null, sampleMin: null, sampleMax: null, note: '当前无实时行情'
+    };
+    live.sort((a, b) => a.ym - b.ym);
+    const minLiqShare = 0.01; let maxV = 0;
+    live.forEach(x => { if ((x.q.volume || 0) > maxV) maxV = x.q.volume; });
+    const liquid = maxV > 0 ? live.filter(x => (x.q.volume || 0) >= maxV * minLiqShare) : live;
+    const pool = liquid.length >= 2 ? liquid : live;
+    const baseRow = (opts.base || 'main') === 'near' ? live[0] : pool.reduce((b, x) => ((x.q.oi || 0) > (b.q.oi || 0) ? x : b), pool[0]);
+    const basePx = baseRow.q.last;
+    const maxRate = 0.6; const anns = [];
+    live.forEach(x => {
+      const D = x.ym - baseRow.ym;
+      if (D > 0 && D <= 12) { const rate = (x.q.last - basePx) / basePx; const a = rate * 12 / D; if (isFinite(a) && Math.abs(a) <= maxRate) anns.push(a); }
+    });
+    let annual = null, status = 'na', note = '';
+    if (anns.length >= 2) annual = A.median(anns);
+    else if (anns.length === 1) { annual = anns[0]; note = '远月样本仅 1 个'; }
+    else {
+      const na = p.nearAnnualLatest;
+      if (na != null) { annual = na; note = '仅主力挂牌，取近月-次月结构'; }
+      else { annual = null; note = '无远月挂牌且无历史结构'; }
     }
+    if (annual == null) status = 'na';
+    else if (annual > 0.005) status = 'contango';
+    else if (annual < -0.005) status = 'back';
+    else status = 'flat';
+    return {
+      code: p.code, name: p.name, ex: p.ex, exName: p.exName,
+      built: !!p.builtAt, hasLive: true, status: status, annual: annual,
+      farCount: anns.length, contractCount: live.length,
+      baseSymbol: baseRow.sym, basePrice: basePx,
+      sampleMin: anns.length ? Math.min.apply(null, anns) : null,
+      sampleMax: anns.length ? Math.max.apply(null, anns) : null, note: note
+    };
   }
 
   // ---------------- 初始化 ----------------
   async function init() {
     bind();
     try {
-      state.status = await api('/api/status');
-      state.prods = (await api('/api/products')).products;
-      buildExChips();
-      buildProdSelect();
-      renderDbStat();
+      const r = await fetch('api/spread-summaries.json').then(x => x.json());
+      state.summaries = r;
+      state.prods = I.LIST.map(inst => {
+        const s = r.find(x => x.code === inst.code);
+        return {
+          code: inst.code, name: inst.name, ex: inst.ex, exName: inst.exName,
+          mult: inst.mult, unit: inst.unit, isFinancial: inst.isFinancial, spot: inst.spot,
+          builtAt: s ? s.builtAt : null, histRange: s ? s.histRange : null, nearAnnualLatest: s ? s.nearAnnualLatest : null,
+        };
+      });
+      buildExChips(); buildProdSelect();
     } catch (e) { toast('初始化失败: ' + e.message, 5000); }
     await loadOverview(true);
-    loadIndexBasis(false);
   }
 
   function buildExChips() {
@@ -164,7 +128,7 @@
     const cnt = {};
     state.prods.forEach(p => { cnt[p.ex] = (cnt[p.ex] || 0) + 1; });
     host.innerHTML = EX_ORDER.filter(e => cnt[e]).map(e =>
-      `<button class="chip" data-ex="${e}">${esc(state.status.exchanges[e].name)}<span class="n">${cnt[e]}</span></button>`
+      `<button class="chip" data-ex="${e}">${esc(I.EXCHANGES[e].name)}<span class="n">${cnt[e]}</span></button>`
     ).join('');
     host.querySelectorAll('.chip').forEach(c => c.onclick = () => {
       const ex = c.dataset.ex;
@@ -181,9 +145,9 @@
     let html = '<option value="">全部品种</option>';
     EX_ORDER.forEach(ex => {
       if (!groups[ex]) return;
-      html += `<optgroup label="${esc(state.status.exchanges[ex].name)}">`;
+      html += `<optgroup label="${esc(I.EXCHANGES[ex].name)}">`;
       groups[ex].forEach(p => {
-        html += `<option value="${p.code}">${esc(p.name)} (${p.code})${p.built ? '' : ' · 未建库'}</option>`;
+        html += `<option value="${p.code}">${esc(p.name)} (${p.code})${p.builtAt ? '' : ' · 未建库'}</option>`;
       });
       html += '</optgroup>';
     });
@@ -194,16 +158,13 @@
   async function loadOverview(silent) {
     if (state.loading) return;
     state.loading = true;
-    setSrc('load', '加载中…');
     try {
-      const p = new URLSearchParams({ base: state.filters.base });
-      const j = await api('/api/overview?' + p);
-      state.overview = j.products || [];
-      state.meta = { quotesTs: j.quotesTs, quotesSource: j.quotesSource, w3: j.w3, w5: j.w5 };
-      const ts = new Date(state.meta.quotesTs);
-      setSrc('ok', `${state.meta.quotesSource} · ${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')} · ${state.overview.length} 品种概览`);
-      renderKpis();
-      renderTable();
+      await ensureQuotes(silent);
+      const opts = { base: state.filters.base, window3y: state.meta.w3, window5y: state.meta.w5 };
+      state.overview = state.prods.map(p => computeOverview(p, state.quotes, opts)).filter(Boolean);
+      const qm = state.quoteMeta, ts = new Date(qm.ts);
+      setSrc('ok', `${qm.sourceName} · ${pad(ts)} · ${state.overview.length} 品种概览`);
+      renderKpis(); renderTable();
     } catch (e) {
       setSrc('err', '行情失败');
       if (!silent) toast('加载失败: ' + e.message, 5000);
@@ -213,32 +174,29 @@
   async function loadProduct(code, silent) {
     if (state.loading) return;
     state.loading = true;
-    setSrc('load', '加载中…');
     try {
-      const p = new URLSearchParams({ base: state.filters.base, products: code });
-      const j = await api('/api/basis?' + p);
-      state.products = j.products || [];
-      state.meta = { quotesTs: j.quotesTs, quotesSource: j.quotesSource, w3: j.w3, w5: j.w5 };
+      await ensureQuotes(silent);
+      const opts = { base: state.filters.base, window3y: state.meta.w3, window5y: state.meta.w5 };
+      const j = await A.productBasis(code, state.quotes, opts);
+      if (!j) {
+        setSrc('err', '无数据');
+        if (!silent) toast('暂无 ' + code + ' 的实时行情或历史库', 4000);
+        state.loading = false; return;
+      }
+      state.products = [j];
       const rows = [];
-      state.products.forEach(pp => {
-        pp.rows.forEach(r => {
-          rows.push({
-            symbol: r.symbol, product: r.product, productName: r.productName, ex: r.ex, exName: r.exName,
-            last: r.last, prevSettle: r.prevSettle, pct: r.pct, oi: r.oi, volume: r.volume,
-            spread: r.spread, rate: r.rate, annual: r.annual, D: r.D, k: r.k,
-            p3: r.p3, p5: r.p5, n3: r.n3, n5: r.n5,
-            isBase: r.isBase, lowLiq: r.lowLiq,
-            baseSymbol: pp.baseSymbol, basePrice: pp.basePrice,
-            tradingDays: pp.tradingDays, histRange: pp.histRange,
-          });
-        });
-      });
+      j.rows.forEach(r => rows.push({
+        symbol: r.symbol, product: r.product, productName: r.productName, ex: r.ex, exName: r.exName,
+        last: r.last, prevSettle: r.prevSettle, pct: r.pct, oi: r.oi, volume: r.volume,
+        spread: r.spread, rate: r.rate, annual: r.annual, D: r.D, k: null,
+        p3: r.p3, p5: r.p5, n3: r.n3, n5: r.n5, isBase: r.isBase, lowLiq: r.lowLiq,
+        baseSymbol: j.baseSymbol, basePrice: j.basePrice, tradingDays: j.tradingDays, histRange: j.histRange,
+      }));
       state.rows = rows;
-      state.products.forEach(pp => { pp._map = {}; pp.rows.forEach(r => pp._map[r.symbol] = r); });
-      const ts = new Date(state.meta.quotesTs);
-      setSrc('ok', `${state.meta.quotesSource} · ${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')} · ${state.rows.length} 合约`);
-      renderKpis();
-      renderTable();
+      j._map = {}; j.rows.forEach(r => { j._map[r.symbol] = r; });
+      const qm = state.quoteMeta, ts = new Date(qm.ts);
+      setSrc('ok', `${qm.sourceName} · ${pad(ts)} · ${rows.length} 合约`);
+      renderKpis(); renderTable();
       if (state.selected) {
         const still = rows.find(r => r.symbol === state.selected);
         if (still) loadDetail(still.product, still.symbol);
@@ -250,9 +208,7 @@
   }
 
   function loadCurrent(silent) {
-    return state.view.mode === 'product'
-      ? loadProduct(state.view.product, silent)
-      : loadOverview(silent);
+    return state.view.mode === 'product' ? loadProduct(state.view.product, silent) : loadOverview(silent);
   }
 
   function openProduct(code) {
@@ -272,9 +228,45 @@
     loadOverview(true);
   }
 
-  function setSrc(kind, text) {
-    $('#srcDot').className = 'dot ' + kind;
-    $('#srcText').textContent = text;
+  // ---------------- 详情（复用已缓存的分位库算分布，无额外网络） ----------------
+  async function loadDetail(product, symbol) {
+    const d = $('#drawer');
+    d.hidden = false; $('#mask').hidden = false;
+    const inst = I.BY_CODE[product];
+    $('#dTitle').textContent = symbol + '　' + (inst ? inst.name : '');
+    $('#dSub').textContent = '加载中…';
+    $('#dStats').innerHTML = ''; $('#chartHist').innerHTML = '';
+    $('#chartSeries').innerHTML = ''; $('#chartCurve').innerHTML = ''; $('#dTable').innerHTML = '';
+    const w = state.detailWin;
+    $$('#dWin button').forEach(b => b.classList.toggle('on', b.dataset.v === w));
+    try {
+      const j = await A.getSpreads(product);
+      const pp = state.products[0];
+      const row = pp && pp._map ? pp._map[symbol] : null;
+      if (!row) { $('#dSub').textContent = '未找到该合约'; return; }
+      const pc = I.parseContract(symbol);
+      const baseRow = (pp.rows.find(r => r.isBase) || pp.rows[0]);
+      const basePc = I.parseContract(baseRow.symbol);
+      const D = pc.ym - basePc.ym;
+      const bucket = j.buckets && j.buckets[D];
+      const w3 = state.meta.w3, w5 = state.meta.w5;
+      const mk = b => b ? A.percentile(b, row.annual, w3) : { pct: null, n: 0, min: null, max: null, median: null, mean: null, p25: null, p75: null };
+      const st3 = mk(bucket), st5 = (function (b) { return b ? A.percentile(b, row.annual, w5) : { pct: null, n: 0, min: null, max: null, median: null, mean: null, p25: null, p75: null }; })(bucket);
+      const histD = bucket ? bucket.d : [], histA = bucket ? bucket.a : [];
+      const histObj = A.histogram(histA, 30);
+      const detail = {
+        product: product, productName: row.productName, exName: row.exName,
+        contract: symbol, last: row.last, spread: row.spread, rate: row.rate, annual: row.annual,
+        D: D, base: pp.baseSymbol, basePrice: pp.basePrice,
+        stat3: st3, stat5: st5,
+        hist3: { d: histD, a: histA, hist: histObj },
+        hist5: { d: histD, a: histA, hist: histObj },
+        range: bucket ? [bucket.d[0], bucket.d[bucket.d.length - 1]] : null,
+        dailyCount: (j.daily && j.daily.d) ? j.daily.d.length : 0,
+      };
+      state.detail = detail;
+      drawDetail(detail, w);
+    } catch (e) { $('#dSub').textContent = '加载失败: ' + e.message; }
   }
 
   // ---------------- KPI ----------------
@@ -287,7 +279,7 @@
       const na = ov.filter(o => o.status === 'na').length;
       const withA = ov.filter(o => o.annual != null);
       const avg = withA.length ? withA.reduce((a, b) => a + b.annual, 0) / withA.length : null;
-      const html = [
+      $('#kpis').innerHTML = [
         kpi('覆盖品种', ov.length, '升贴水概览'),
         kpi('整体升水', contango, 'Contango 远月贵', 'up'),
         kpi('整体贴水', back, 'Backwardation 远月便宜', 'dn'),
@@ -295,10 +287,8 @@
         kpi('数据不足', na, '需行情/建库', 'na'),
         kpi('平均年化幅度', avg == null ? '—' : fmtPct(avg, 2, true), '有数据品种均值'),
       ].join('');
-      $('#kpis').innerHTML = html;
       return;
     }
-    // 品种详情模式：沿用合约级统计
     const rows = state.rows.filter(r => r.annual != null);
     const win = state.filters.win === '5' ? 'p5' : 'p3';
     const withP = rows.filter(r => r[win] != null);
@@ -306,16 +296,15 @@
     const hi = withP.filter(r => r[win] >= 90).length;
     const lo = withP.filter(r => r[win] <= 10).length;
     const contango = rows.filter(r => r.annual > 0).length;
-    const buildP = state.prods.filter(p => p.built).length;
-    const html = [
+    const buildP = state.prods.filter(p => p.builtAt).length;
+    $('#kpis').innerHTML = [
       kpi('本品种合约', state.rows.length, (state.products[0] ? state.products[0].name : '') + ' 的合约'),
-      kpi('历史库品种', buildP + '/' + state.prods.length, `${fmtInt(state.status.history.totalBars)} 条日K`),
-      kpi('平均历史分位', avg == null ? '—' : avg.toFixed(1), `${win === 'p5' ? '5' : '3'}年窗口 · ${withP.length} 个有效`),
+      kpi('历史库品种', buildP + '/' + state.prods.length, '历史分位基准库'),
+      kpi('平均历史分位', avg == null ? '—' : avg.toFixed(1), (win === 'p5' ? '5' : '3') + '年窗口 · ' + withP.length + ' 个有效'),
       kpi('高分位(≥90)', hi, '升水处于历史高位', 'up'),
       kpi('低分位(≤10)', lo, '贴水处于历史低位', 'dn'),
       kpi('Contango 合约', contango + '/' + rows.length, '年化升水率为正'),
     ].join('');
-    $('#kpis').innerHTML = html;
   }
   function kpi(k, v, s, c) {
     return `<div class="kpi"><div class="k">${esc(k)}</div><div class="v ${c || ''}">${esc(v)}</div><div class="s">${esc(s || '')}</div></div>`;
@@ -421,7 +410,7 @@
     const tbody = $('#tbody');
     const thr = $('#tbl thead tr');
     const isOv = state.view.mode === 'overview';
-    $('#hideSeg').hidden = isOv; // 概览模式无需"显示"筛选
+    $('#hideSeg').hidden = isOv;
     if (isOv) {
       thr.innerHTML = ovHead();
       const rows = filteredOverview();
@@ -429,13 +418,11 @@
         tbody.innerHTML = '';
         const e = $('#emptyBox');
         e.hidden = false;
-        e.innerHTML = state.overview.length ? '<b>没有符合条件的品种</b>请调整筛选条件' : '<b>尚未加载数据</b>请点击右上角「数据更新」→ 构建历史数据库';
+        e.innerHTML = state.overview.length ? '<b>没有符合条件的品种</b>请调整筛选条件' : '<b>尚未加载数据</b>请刷新行情';
       } else {
         $('#emptyBox').hidden = true;
         tbody.innerHTML = rows.map(overviewRow).join('');
-        tbody.querySelectorAll('tr').forEach(tr => {
-          tr.onclick = () => openProduct(tr.dataset.code);
-        });
+        tbody.querySelectorAll('tr').forEach(tr => { tr.onclick = () => openProduct(tr.dataset.code); });
       }
       $('#rowCount').textContent = `显示 ${rows.length} / ${state.overview.length} 个品种`;
     } else {
@@ -447,9 +434,7 @@
         tbody.innerHTML = '';
         const e = $('#emptyBox');
         e.hidden = false;
-        e.innerHTML = state.rows.length
-          ? '<b>没有符合条件的合约</b>请调整筛选条件'
-          : '<b>尚未加载数据</b>请点击右上角「数据更新」→ 构建历史数据库';
+        e.innerHTML = state.rows.length ? '<b>没有符合条件的合约</b>请调整筛选条件' : '<b>尚未加载数据</b>请刷新行情';
       } else {
         $('#emptyBox').hidden = true;
         tbody.innerHTML = rows.map(r => tr(r, win, cmp)).join('');
@@ -464,7 +449,6 @@
       }
       $('#rowCount').textContent = `显示 ${rows.length} / ${state.rows.length} 个合约`;
     }
-    // 表头排序态 + 绑定
     $$('thead th.sortable').forEach(th => {
       th.classList.toggle('sorted', th.dataset.k === state.sort.key);
       th.classList.toggle('asc', th.dataset.k === state.sort.key && state.sort.dir === 'asc');
@@ -508,25 +492,7 @@
     </tr>`;
   }
 
-  // ---------------- 详情 ----------------
-  async function loadDetail(product, symbol) {
-    const d = $('#drawer');
-    d.hidden = false; $('#mask').hidden = false;
-    $('#dTitle').textContent = symbol + '　' + (state.prods.find(p => p.code === product) || {}).name;
-    $('#dSub').textContent = '加载中…';
-    $('#dStats').innerHTML = ''; $('#chartHist').innerHTML = '';
-    $('#chartSeries').innerHTML = ''; $('#chartCurve').innerHTML = ''; $('#dTable').innerHTML = '';
-    const w = state.detailWin;
-    $$('#dWin button').forEach(b => b.classList.toggle('on', b.dataset.v === w));
-    try {
-      const j = await api(`/api/detail?product=${product}&contract=${symbol}&base=${state.filters.base}`);
-      state.detail = j;
-      drawDetail(j, w);
-    } catch (e) {
-      $('#dSub').textContent = '加载失败: ' + e.message;
-    }
-  }
-
+  // ---------------- 详情渲染 ----------------
   function drawDetail(j, w) {
     const st = w === '5' ? j.stat5 : j.stat3;
     const hist = w === '5' ? j.hist5 : j.hist3;
@@ -584,7 +550,6 @@
   }
 
   // ---------------- 事件绑定 ----------------
-  // 前端 CSV 导出（静态版，无后端 /api/export）
   function exportCsv() {
     const rows = state.rows || [];
     const head = ['合约', '品种', '交易所', '最新价', '月差', '升贴水', '价差率%', '年化率%', '3年分位', '5年分位', '持仓量', '成交量'];
@@ -601,7 +566,6 @@
   }
 
   function bind() {
-    // 筛选
     $('#prodSel').onchange = e => {
       if (e.target.value) openProduct(e.target.value);
       else if (state.view.mode === 'product') backToOverview();
@@ -618,7 +582,6 @@
       if (v !== 'c') state.detailWin = v;
       renderKpis(); renderTable();
       if (state.detail) drawDetail(state.detail, state.detailWin);
-      if (state.ib) loadIndexBasis(false);
     });
     segBind('#hideSeg', v => { state.filters.show = v; renderTable(); });
     segBind('#dWin', v => {
@@ -626,55 +589,28 @@
       $$('#dWin button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
       if (state.detail) drawDetail(state.detail, v);
     });
-    // 返回
     $('#btnBack').onclick = backToOverview;
-    // 抽屉
     $('#dClose').onclick = closeDrawer;
     $('#mask').onclick = closeDrawer;
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { if (!$('#drawer').hidden) closeDrawer(); else if (!$('#upModal').hidden) closeModal(); }
+      if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer();
     });
-    // 静态快照版：禁用所有写/实时操作，仅保留查看、筛选、排序、CSV 导出、单合约下钻
-    const isStatic = STATIC_MODE || new URLSearchParams(location.search).get('static') === '1';
-    // 刷新：禁用并提示
+    // 刷新：重新拉行情并重算（动态能力核心）
     const btnRefresh = $('#btnRefresh');
-    btnRefresh.disabled = true;
-    btnRefresh.title = '静态快照版，无实时刷新';
-    btnRefresh.onclick = () => toast('静态快照版：数据已冻结，无实时刷新');
-    // 导出：改用前端 CSV（替代后端 /api/export）
+    btnRefresh.disabled = false;
+    btnRefresh.title = '重新拉取实时行情并重算';
+    btnRefresh.onclick = doRefresh;
     $('#btnExport').onclick = () => exportCsv();
-    // 自动刷新：禁用
+    // 自动刷新：默认开启，保持监控页实时
     const autoRefresh = $('#autoRefresh');
-    if (autoRefresh) { autoRefresh.checked = false; autoRefresh.disabled = true; autoRefresh.parentElement && (autoRefresh.parentElement.style.opacity = '.5'); }
-    if (!isStatic) state.autoTimer = setInterval(() => loadCurrent(true), 60000);
-    // 数据更新弹窗：隐藏入口
-    const btnUpdate = $('#btnUpdate');
-    if (btnUpdate) { btnUpdate.style.display = 'none'; btnUpdate.onclick = (e) => e.preventDefault(); }
-    $('#upClose').onclick = closeModal;
-    $('#upMask').onclick = closeModal;
-    $('#doRefresh').onclick = () => doRefresh($('#srcSeg .on').dataset.v);
-    $('#doBuild').onclick = startBuild;
-    $('#doStop').onclick = async () => {
-      try {
-        await api('/api/build/stop', { method: 'POST' });
-        $('#ptext').textContent += '　[已请求停止…]';
-        $('#doStop').disabled = true;
-      } catch (e) { toast('停止失败: ' + e.message); }
-    };
-    $('#doImport').onclick = doImport;
-    $('#doVerify').onclick = doVerify;
-    $('#ibToggle').onclick = e => {
-      const b = $('#ibBody');
-      const on = b.classList.toggle('collapsed');
-      e.target.textContent = on ? '展开' : '收起';
-    };
-    $('#ibRefresh').onclick = () => loadIndexBasis(true);
-    $('#importFile').onchange = e => {
-      const f = e.target.files[0]; if (!f) return;
-      const rd = new FileReader();
-      rd.onload = () => { $('#importText').value = rd.result; toast('已读入 ' + f.name + '，点击「导入」提交'); };
-      rd.readAsText(f, 'utf-8');
-    };
+    if (autoRefresh) {
+      autoRefresh.checked = true;
+      autoRefresh.onchange = e => {
+        clearInterval(state.autoTimer);
+        if (e.target.checked) state.autoTimer = setInterval(() => { if (!state.loading) loadCurrent(true); }, 60000);
+      };
+      state.autoTimer = setInterval(() => { if (!state.loading) loadCurrent(true); }, 60000);
+    }
   }
 
   function segBind(sel, cb) {
@@ -684,110 +620,16 @@
     });
   }
 
-  async function doRefresh(source, silent) {
+  async function doRefresh() {
     const btn = $('#btnRefresh');
     btn.disabled = true; btn.textContent = '刷新中…';
+    const prev = state.view.mode;
     try {
-      const u = '/api/refresh' + (source ? '?source=' + source : '');
-      const j = await api(u);
-      if (!silent) toast(`已刷新：${j.sourceName} · ${j.count} 个合约 · ${j.ms}ms`);
+      state.quotes = null; state.quoteMeta = null; // 强制重新拉取
       await loadCurrent(true);
-      loadIndexBasis(false);
+      toast('已刷新行情：' + (state.quoteMeta ? state.quoteMeta.sourceName : ''));
     } catch (e) { toast('刷新失败: ' + e.message, 5000); }
     finally { btn.disabled = false; btn.textContent = '刷新行情'; }
-  }
-
-  // ---------------- 数据更新弹窗 ----------------
-  async function openModal() {
-    $('#upModal').hidden = false; $('#upMask').hidden = false;
-    try { state.status = await api('/api/status'); renderDbStat(); } catch (e) { }
-  }
-  function closeModal() { $('#upModal').hidden = true; $('#upMask').hidden = true; }
-
-  function renderDbStat() {
-    const h = state.status && state.status.history;
-    if (!h) return;
-    const built = state.prods ? state.prods.filter(p => p.built).length : 0;
-    $('#dbStat').innerHTML = [
-      ['已建库品种', built + ' / ' + (state.prods ? state.prods.length : '—')],
-      ['合约总数', fmtInt(h.totalContracts)],
-      ['日K条数', fmtInt(h.totalBars)],
-      ['数据源', '新浪(主) + 东财(备)'],
-    ].map(x => `<div><span>${esc(x[0])}</span><b>${esc(x[1])}</b></div>`).join('');
-  }
-
-  function startBuild() {
-    const years = $('#buildYears').value, conc = $('#buildConc').value, force = $('#buildForce').checked;
-    $('#prog').hidden = false; $('#buildLog').hidden = false;
-    $('#buildLog').textContent = '';
-    $('#doBuild').disabled = true;
-    $('#doStop').hidden = false; $('#doStop').disabled = false;
-    if (state.es) state.es.close();
-    state.es = new EventSource('/api/build/stream');
-    let done = 0;
-    state.es.addEventListener('start', e => {
-      const d = JSON.parse(e.data);
-      $('#ptext').textContent = `开始构建 ${d.total} 个品种（回溯 ${d.years} 年）`;
-    });
-    state.es.addEventListener('progress', e => {
-      const d = JSON.parse(e.data);
-      done = d.i;
-      const p = (d.i / d.total * 100).toFixed(1);
-      $('#pbarFill').style.width = p + '%';
-      $('#ptext').textContent = `[${d.i + 1}/${d.total}] ${d.product} ${d.name}`;
-    });
-    state.es.addEventListener('tick', e => {
-      const d = JSON.parse(e.data);
-      $('#ptext').textContent = `[${done + 1}] ${d.product}  抓取合约 ${d.done}/${d.total}  最新 ${d.sym}  (新浪 ${d.stat.sina} / 东财 ${d.stat.eastmoney} / 失败 ${d.stat.fail})`;
-    });
-    state.es.addEventListener('product', e => {
-      const d = JSON.parse(e.data);
-      const lg = $('#buildLog');
-      if (d.error) lg.textContent += `✗ ${d.product} 失败: ${d.error}\n`;
-      else lg.textContent += `✓ ${d.product} ${d.name}  合约 ${d.contracts}（新抓 ${d.ok}）  新浪 ${d.srcStat.sina} / 东财 ${d.srcStat.eastmoney}\n`;
-      lg.scrollTop = lg.scrollHeight;
-    });
-    state.es.addEventListener('done', e => {
-      const d = JSON.parse(e.data);
-      $('#pbarFill').style.width = '100%';
-      $('#ptext').textContent = `构建${d.stopped ? '已停止' : '完成'}，处理 ${d.results.length} 个品种，耗时 ${(d.ms / 1000).toFixed(0)}s`;
-      state.es.close(); state.es = null;
-      $('#doBuild').disabled = false;
-      $('#doStop').hidden = true;
-      toast('历史库构建完成，正在重算分位…');
-      api('/api/products').then(j => { state.prods = j.products; buildProdSelect(); renderDbStat(); });
-      loadCurrent(true);
-    });
-    state.es.addEventListener('error', e => {
-      $('#ptext').textContent += ' [连接错误]';
-      if (state.es) state.es.close();
-      state.es = null; $('#doBuild').disabled = false;
-    });
-    fetch('/api/build', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ years: +years, concurrency: +conc, force: force, base: state.filters.base }),
-    }).then(r => r.json()).then(j => {
-      if (!j.ok) { $('#ptext').textContent = '启动失败: ' + j.error; $('#doBuild').disabled = false; }
-    }).catch(e => { $('#ptext').textContent = '启动失败: ' + e.message; $('#doBuild').disabled = false; });
-  }
-
-  async function doImport() {
-    const txt = $('#importText').value.trim();
-    if (!txt) { toast('请先粘贴或选择文件内容'); return; }
-    const msg = $('#importMsg');
-    msg.className = 'msg'; msg.textContent = '导入中…';
-    try {
-      const j = await api('/api/import', { method: 'POST', body: txt });
-      msg.className = 'msg ok';
-      msg.textContent = '导入成功：' + j.report.map(r =>
-        r.error ? `${r.product} 跳过(${r.error})` : `${r.product} ${r.name} 新增${r.added} 更新${r.updated}`).join('；');
-      toast('导入完成，正在重算分位…');
-      await loadCurrent(true);
-      const d = state.detail;
-      if (state.selected && d) loadDetail(d.product, state.selected);
-    } catch (e) {
-      msg.className = 'msg err'; msg.textContent = '导入失败: ' + e.message;
-    }
   }
 
   init();
