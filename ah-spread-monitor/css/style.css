@@ -20,6 +20,8 @@ td a{color:#2563eb;text-decoration:none}
 .stats{margin:10px 0;font-size:14px;color:#333}
 .controls{margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap}
 .controls button.active{background:#2563eb;color:#fff;border-color:#2563eb}
+.controls button.online{margin-left:8px;border-color:#16a34a;color:#16a34a}
+.controls button.online:hover{background:#f0fdf4}
 #manageBtn{background:#2563eb;color:#fff;border-color:#2563eb}
 .panel{margin-top:16px;padding:16px;border:1px solid #e5e7eb;border-radius:8px;background:#fff}
 .panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
