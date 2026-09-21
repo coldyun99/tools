@@ -23,20 +23,33 @@ async function load() {
     const r = await fetch('./api/spread?aCode=' + encodeURIComponent(aCode) + '&hCode=' + encodeURIComponent(hCode));
     if (r.ok) { apply(await r.json(), 'live'); return; }
   } catch (e) { /* 无后端，继续尝试静态 */ }
-  // 模式二：静态快照（GitHub Pages）
+  // 模式二：静态快照（GitHub Pages）—— 仅当为"真实构建数据"时才用；演示数据忽略，回落在线取真实
   try {
     const r = await fetch('./data/hist_' + encodeURIComponent(aCode) + '.json');
-    if (r.ok) { apply(await r.json(), 'static'); return; }
-  } catch (e) { /* 都失败 */ }
-  const el = document.getElementById('srcLabel');
-  el.textContent = '加载失败'; el.className = 'badge demo';
+    if (r.ok) {
+      const d = await r.json();
+      if (d && Array.isArray(d.series) && d.series.length && !d.demo) { apply(d, 'static'); return; }
+    }
+  } catch (e) { /* 继续在线 */ }
+  // 模式三：浏览器端在线拉取（纯静态部署 / 新加股票 / 静态仅为演示数据时，现拉真实历史，无需重建）
+  try {
+    let series = getHistCache(aCode);
+    if (!series) { const d = await onlineHistory(aCode, hCode); series = d.series; setHistCache(aCode, series); }
+    apply({ series: series, demo: false, online: true }, 'online'); return;
+  } catch (e) {
+    const el = document.getElementById('srcLabel');
+    el.textContent = '在线拉取失败'; el.className = 'badge demo';
+    document.getElementById('stats').innerHTML = '<span style="color:#c00">在线拉取历史失败：' + e.message + '。可点"在线拉取"重试，或检查网络 / CORS 代理可达性。</span>';
+  }
 }
 function apply(d, mode) {
-  staticMode = (mode === 'static');
+  staticMode = (mode === 'static' || mode === 'online');
   ALL = d.series || [];
   const el = document.getElementById('srcLabel');
-  if (staticMode) {
+  if (mode === 'static') {
     el.textContent = '静态快照(构建数据)'; el.className = 'badge demo';
+  } else if (mode === 'online') {
+    el.textContent = '在线实时(代理)'; el.className = 'badge live';
   } else {
     el.textContent = d.demo ? '演示数据' : '实时+缓存'; el.className = 'badge ' + (d.demo ? 'demo' : 'live');
   }
@@ -105,4 +118,6 @@ document.querySelectorAll('.controls button').forEach(b => b.onclick = () => {
   b.classList.add('active');
   render(Number(b.dataset.r));
 });
+const onlineBtn = document.getElementById('onlineBtn');
+if (onlineBtn) onlineBtn.onclick = () => { try { localStorage.removeItem(histCacheKey(aCode)); } catch (e) {} load(); };
 load();
