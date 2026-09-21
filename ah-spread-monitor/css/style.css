@@ -1,0 +1,36 @@
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;background:#f5f6f8;color:#222}
+.topbar{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;background:#fff;border-bottom:1px solid #e5e7eb}
+.topbar h1{font-size:18px;margin:0}
+.meta{display:flex;gap:12px;align-items:center;font-size:13px;color:#555}
+.meta a{color:#2563eb;text-decoration:none}
+button{cursor:pointer;border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:6px 12px;font-size:13px}
+button:hover{background:#f0f4ff}
+.badge{padding:2px 8px;border-radius:10px;font-size:12px}
+.badge.live{background:#dcfce7;color:#166534}
+.badge.demo{background:#fef3c7;color:#92400e}
+.badge.mix{background:#dbeafe;color:#1e40af}
+main{padding:16px}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+th,td{padding:10px 12px;text-align:center;border-bottom:1px solid #f0f0f0;font-size:14px}
+th{background:#fafafa;color:#555;font-weight:600}
+td a{color:#2563eb;text-decoration:none}
+.up{color:#e11d48}    /* 涨=红（A股惯例） */
+.down{color:#16a34a}  /* 跌=绿 */
+.stats{margin:10px 0;font-size:14px;color:#333}
+.controls{margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap}
+.controls button.active{background:#2563eb;color:#fff;border-color:#2563eb}
+#manageBtn{background:#2563eb;color:#fff;border-color:#2563eb}
+.panel{margin-top:16px;padding:16px;border:1px solid #e5e7eb;border-radius:8px;background:#fff}
+.panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.panel-head button{border:none;background:transparent;color:#2563eb;cursor:pointer}
+.hint{font-size:12px;color:#888;margin:4px 0 12px;line-height:1.6}
+.hint code{background:#f1f5f9;padding:1px 4px;border-radius:3px}
+.mg-list{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.mg-item{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border:1px solid #eee;border-radius:6px;font-size:14px}
+.mg-item small{color:#999;margin-left:6px}
+.mg-del{border:1px solid #fca5a5;color:#dc2626;background:#fff;border-radius:6px;padding:3px 10px;cursor:pointer}
+.mg-add{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.mg-add input,.mg-add select{flex:1;min-width:120px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
+.mg-export{display:flex;flex-direction:column;gap:6px}
+.mg-export textarea{width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid #d1d5db;border-radius:6px}
