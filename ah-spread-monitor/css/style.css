@@ -36,3 +36,8 @@ td a{color:#2563eb;text-decoration:none}
 .mg-add input,.mg-add select{flex:1;min-width:120px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
 .mg-export{display:flex;flex-direction:column;gap:6px}
 .mg-export textarea{width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid #d1d5db;border-radius:6px}
+.mg-relay{display:flex;flex-direction:column;gap:6px;margin-top:6px;padding-top:12px;border-top:1px dashed #eee}
+.mg-relay label{font-size:13px;color:#555}
+.mg-relay input{flex:1;min-width:200px;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
+.mg-relay button{border:1px solid #2563eb;color:#2563eb;background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer}
+.mg-relay button:hover{background:#eff6ff}
