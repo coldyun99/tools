@@ -56,11 +56,11 @@ function renderRows(rows, mode, rate, updated, builtAt) {
       '<td>' + (x.type || 'ah').toUpperCase() + '</td>' +
       '<td>' + x.aCode + '</td>' +
       (pending
-        ? '<td colspan="2" style="color:#999">— 需构建 —</td>'
+        ? '<td colspan="2" style="color:#999">— 详情页在线看 —</td>'
         : '<td class="' + cls(f.aChg) + '">' + fmt(f.aPrice) + '</td><td class="' + cls(f.aChg) + '">' + pct(f.aChg) + '</td>') +
       '<td>' + x.hCode + '</td>' +
       (pending
-        ? '<td colspan="2" style="color:#999">更新 config 后重建</td>'
+        ? '<td colspan="2" style="color:#999">点开详情页在线拉历史</td>'
         : '<td class="' + cls(f.hChg) + '">' + fmt(f.hPrice) + '</td><td class="' + cls(f.hChg) + '">' + pct(f.hChg) + '</td>') +
       (pending ? '<td style="color:#999">—</td>' : '<td class="' + cls(x.metric) + '">' + fmt(x.metric, 3) + '</td>') +
       '<td><a href="./detail.html?aCode=' + x.aCode + '&hCode=' + x.hCode + '&name=' + encodeURIComponent(x.name) + '">查看</a></td>';
