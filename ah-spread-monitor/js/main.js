@@ -1,13 +1,15 @@
 /*
  * 主页面：双模式 + 品种增删（localStorage 持久化）
- *   实时模式: POST ./api/quotes（携带当前品种列表，支持 UI 新增的品种）
- *   静态模式: ./data/quotes.json（仅含构建期品种；新增品种显示"需构建"）
- *   品种定义来源: ./data/products.json（构建期生成）；localStorage 存增删覆盖。
+ *   实时模式: POST ./api/quotes（自托管 Node 后端，需 server.js 在跑）
+ *   在线模式: 经浏览器端「云函数中继」(relayFetch) 直接抓腾讯实时行情（无后端也能实时，见 relay/README.md）
+ *   静态模式: ./data/quotes.json（构建期冻结快照，中继/后端都不可用时兜底）
+ *   品种定义来源: ./data/products.json；localStorage 存增删覆盖。
  * 使用相对路径，确保项目页子路径（user.github.io/<repo>/）也能正确解析。
  */
 const REFRESH_MS = 15000;
 let timer = null, staticMode = false;
 const LS_KEY = 'ahm_products_v1';
+const RATE = 1.099; // CNY→HKD 汇率（近似，后续可换实时源）
 
 /* ---------------- 品种列表（基础 + 本地增删覆盖） ---------------- */
 function getOv() {
@@ -70,7 +72,33 @@ function renderRows(rows, mode, rate, updated, builtAt) {
   if (!staticMode && !timer) timer = setInterval(load, REFRESH_MS); // 静态快照无需轮询
 }
 
-/* ---------------- 数据加载（双模式） ---------------- */
+/* ---------------- 在线模式：经中继抓实时行情 ---------------- */
+async function loadLive(effective, rate) {
+  return Promise.all(effective.map(async (p) => {
+    try {
+      const [ta, th] = await Promise.all([
+        relayFetch('https://qt.gtimg.cn/q=' + p.aCode),
+        relayFetch('https://qt.gtimg.cn/q=' + p.hCode)
+      ]);
+      const fa = parseGtimg(ta), fh = parseGtimg(th);
+      const aPrice = fa.price, hPrice = fh.price;
+      const metric = (aPrice && hPrice) ? +(aPrice * rate / hPrice).toFixed(3) : null;
+      return {
+        type: p.type, name: p.name, aCode: p.aCode, hCode: p.hCode,
+        metricName: p.metricName || 'A/H比值', live: true, pending: false,
+        fields: {
+          aPrice: aPrice, aChg: fa.prevClose ? (aPrice - fa.prevClose) / fa.prevClose * 100 : null,
+          hPrice: hPrice, hChg: fh.prevClose ? (hPrice - fh.prevClose) / fh.prevClose * 100 : null
+        },
+        metric: metric
+      };
+    } catch (e) {
+      return { type: p.type, name: p.name, aCode: p.aCode, hCode: p.hCode, metricName: p.metricName || 'A/H比值', live: false, pending: true, fields: {}, metric: null };
+    }
+  }));
+}
+
+/* ---------------- 数据加载（三模式：后端 / 中继在线 / 静态快照） ---------------- */
 async function load() {
   if (location.protocol === 'file:') {
     const el = document.getElementById('srcLabel');
@@ -90,8 +118,13 @@ async function load() {
       body: JSON.stringify({ products: effective })
     });
     if (r.ok) { const d = await r.json(); renderRows(d.rows, 'live', d.rate, d.updated, d.builtAt); return; }
-  } catch (e) { /* 无后端，继续尝试静态 */ }
-  // 模式二：静态快照（GitHub Pages）
+  } catch (e) { /* 无后端，继续 */ }
+  // 模式二：浏览器端经云函数中继抓实时行情（无后端也能实时）
+  try {
+    const rows = await loadLive(effective, RATE);
+    renderRows(rows, 'live', RATE, Date.now(), null); return;
+  } catch (e) { /* 中继不可用，回落快照 */ }
+  // 模式三：静态快照（构建期冻结；中继/后端都不可用时兜底）
   try {
     const r = await fetch('./data/quotes.json');
     if (r.ok) {
@@ -100,7 +133,7 @@ async function load() {
       const rows = effective.map(p => {
         const q = map.get(p.aCode);
         if (q) return q;
-        return { id: p.aCode, type: p.type, name: p.name, aCode: p.aCode, hCode: p.hCode, metricName: p.metricName || 'A/H比值', live: false, pending: true, fields: {}, metric: null };
+        return { type: p.type, name: p.name, aCode: p.aCode, hCode: p.hCode, metricName: p.metricName || 'A/H比值', live: false, pending: true, fields: {}, metric: null };
       });
       renderRows(rows, 'static', d.rate, d.updated, d.builtAt); return;
     }
@@ -155,15 +188,27 @@ function exportConfig() {
     document.getElementById('mgExport').value = JSON.stringify(out, null, 2);
   });
 }
+function saveRelay() {
+  const v = document.getElementById('mgRelay').value.trim();
+  try { localStorage.setItem('ahm_relay', v); } catch (e) {}
+  const tip = document.getElementById('relayTip');
+  if (v) { tip.textContent = '已保存，刷新即生效'; tip.style.color = '#16a34a'; }
+  else { tip.textContent = '已清空，将回落冻结快照'; tip.style.color = '#c00'; }
+  load();
+}
 
 /* ---------------- 初始化 ---------------- */
 document.getElementById('refreshBtn').onclick = load;
 document.getElementById('manageBtn').onclick = () => {
   const p = document.getElementById('managePanel');
   p.style.display = (p.style.display === 'none') ? 'block' : 'none';
-  if (p.style.display === 'block') renderManage();
+  if (p.style.display === 'block') {
+    try { document.getElementById('mgRelay').value = localStorage.getItem('ahm_relay') || ''; } catch (e) {}
+    renderManage();
+  }
 };
 document.getElementById('closeManage').onclick = () => { document.getElementById('managePanel').style.display = 'none'; };
 document.getElementById('addBtn').onclick = addProduct;
 document.getElementById('exportBtn').onclick = exportConfig;
+document.getElementById('saveRelay').onclick = saveRelay;
 load();
