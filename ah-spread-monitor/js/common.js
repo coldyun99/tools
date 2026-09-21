@@ -2,10 +2,35 @@ function fmt(n, d) { d = d || 2; return (n == null || isNaN(n)) ? '-' : Number(n
 function pct(n) { const v = Number(n); if (isNaN(v)) return '-'; return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
 function cls(n) { const v = Number(n); if (isNaN(v)) return ''; return v >= 0 ? 'up' : 'down'; }
 
-// ---------------- 浏览器端在线拉取（纯静态 GitHub Pages 也能按需取历史，无需重建） ----------------
-// 经公共 CORS 代理取东财/腾讯原始数据；仅用于无后端、无预构建历史的静态部署。
-// 如你有自己的代理/Cloudflare Worker，改下面这一行即可。
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+// ---------------- 浏览器端数据中继（国内云函数，替代公共 CORS 代理） ----------------
+// 地址来源优先级：config.js 的 RELAY_BASE > localStorage('ahm_relay') > 空（未配置）。
+// 详见 relay/README.md。地址格式示例：https://xxx.apigw.tencentcs.com/release/?url=
+function getRelayBase() {
+  try {
+    const ls = localStorage.getItem('ahm_relay');
+    if (ls && ls.trim()) return ls.trim();
+  } catch (e) {}
+  try {
+    if (typeof RELAY_BASE !== 'undefined' && RELAY_BASE && RELAY_BASE.trim()) return RELAY_BASE.trim();
+  } catch (e) {}
+  return '';
+}
+function relayFetch(targetUrl) {
+  const base = getRelayBase();
+  if (!base) return Promise.reject(new Error('未配置中继地址（RELAY_BASE 为空）。请在「管理品种」面板填入你的云函数网关地址，或部署 relay/ 里的函数。'));
+  return fetch(base + encodeURIComponent(targetUrl)).then(r => {
+    if (!r.ok) throw new Error('中继返回 ' + r.status);
+    return r.text();
+  });
+}
+// 解析腾讯 gtimg 行情文本（形如 "sh601318,平安银行,..."~...），数值为 ASCII，GBK 编码不影响数字解析
+function parseGtimg(t) {
+  const m = (t || '').match(/="([^"]*)"/);
+  if (!m) return {};
+  const f = m[1].split('~');
+  return { name: f[1], price: parseFloat(f[3]), prevClose: parseFloat(f[4]) };
+}
+
 function secidOf(sym) {
   if (sym.startsWith('sh')) return '1.' + sym.slice(2);
   if (sym.startsWith('sz')) return '0.' + sym.slice(2);
@@ -13,12 +38,10 @@ function secidOf(sym) {
   return sym;
 }
 function onlineQuote(sym) {
-  const u = CORS_PROXY + encodeURIComponent('https://qt.gtimg.cn/q=' + sym);
-  return fetch(u).then(r => r.text()).then(t => {
-    const m = t.match(/="([^"]*)"/);
-    if (!m) throw new Error('无行情 ' + sym);
-    const f = m[1].split('~');
-    return { price: parseFloat(f[3]), prevClose: parseFloat(f[4]), name: f[1] };
+  return relayFetch('https://qt.gtimg.cn/q=' + sym).then(t => {
+    const f = parseGtimg(t);
+    if (!f.price) throw new Error('无行情 ' + sym);
+    return { price: f.price, prevClose: f.prevClose, name: f.name };
   });
 }
 function onlineHistory(aCode, hCode) {
@@ -26,8 +49,8 @@ function onlineHistory(aCode, hCode) {
   const mk = (sec) => 'https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=' + sec +
     '&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55&klt=101&fqt=0&beg=2015-01-01&end=' + end;
   return Promise.all([
-    fetch(CORS_PROXY + encodeURIComponent(mk(secidOf(aCode)))).then(r => r.text()),
-    fetch(CORS_PROXY + encodeURIComponent(mk(secidOf(hCode)))).then(r => r.text())
+    relayFetch(mk(secidOf(aCode))),
+    relayFetch(mk(secidOf(hCode)))
   ]).then(([ta, th]) => {
     const parse = (t) => { const j = JSON.parse(t); const kl = (j.data && j.data.klines) || []; return kl.map(r => { const f = r.split(','); return { date: f[0], close: parseFloat(f[2]) }; }).filter(r => !isNaN(r.close)); };
     const a = parse(ta), h = parse(th);
