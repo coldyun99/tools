@@ -1,0 +1,88 @@
+{
+  "products": [
+    {
+      "type": "ah",
+      "name": "中国平安",
+      "aCode": "sh601318",
+      "hCode": "hk02318",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "招商银行",
+      "aCode": "sh600036",
+      "hCode": "hk03968",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "中信证券",
+      "aCode": "sh600030",
+      "hCode": "hk06030",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "中国石化",
+      "aCode": "sh600028",
+      "hCode": "hk00386",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "工商银行",
+      "aCode": "sh601398",
+      "hCode": "hk01398",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "建设银行",
+      "aCode": "sh601939",
+      "hCode": "hk00939",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "农业银行",
+      "aCode": "sh601288",
+      "hCode": "hk01288",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "中国人寿",
+      "aCode": "sh601628",
+      "hCode": "hk02628",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "中国神华",
+      "aCode": "sh601088",
+      "hCode": "hk01088",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "海螺水泥",
+      "aCode": "sh600585",
+      "hCode": "hk00914",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "紫金矿业",
+      "aCode": "sh601899",
+      "hCode": "hk02899",
+      "metricName": "A/H比值"
+    },
+    {
+      "type": "ah",
+      "name": "比亚迪",
+      "aCode": "sz002594",
+      "hCode": "hk01211",
+      "metricName": "A/H比值"
+    }
+  ]
+}
