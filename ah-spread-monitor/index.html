@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AH 价差实时监控</title>
+<link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>AH 价差实时监控</h1>
+  <div class="meta">
+    <span id="rateLabel">汇率加载中…</span>
+    <span id="updLabel"></span>
+    <span id="srcLabel" class="badge"></span>
+    <button id="refreshBtn">刷新</button>
+    <button id="manageBtn">管理品种</button>
+  </div>
+</header>
+<main>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>名称</th><th>类型</th><th>A股</th><th>A价</th><th>A涨%</th>
+        <th>H股</th><th>H价(HKD)</th><th>H涨%</th>
+        <th id="metricCol">A/H比值</th><th>详情</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <section id="managePanel" class="panel" style="display:none">
+    <div class="panel-head">
+      <strong>品种管理</strong>
+      <button id="closeManage">关闭</button>
+    </div>
+    <p class="hint">增删仅保存在本浏览器（localStorage）。静态部署下新增品种需把导出配置粘回 <code>config.json</code> 并重新构建才有历史数据；自托管实时模式下即时生效。</p>
+    <div id="mgList" class="mg-list"></div>
+    <div class="mg-add">
+      <input id="mgName" placeholder="名称，如 建设银行">
+      <select id="mgType"><option value="ah">AH</option><option value="future">期货</option><option value="cbond">可转债</option></select>
+      <input id="mgA" placeholder="A股代码 sh601318">
+      <input id="mgH" placeholder="H股代码 hk02318">
+      <button id="addBtn">添加</button>
+    </div>
+    <div class="mg-export">
+      <button id="exportBtn">导出 config.json</button>
+      <textarea id="mgExport" rows="6" placeholder="点击上方按钮生成当前品种列表"></textarea>
+    </div>
+  </section>
+</main>
+<script src="./js/common.js"></script>
+<script src="./js/main.js"></script>
+</body>
+</html>
