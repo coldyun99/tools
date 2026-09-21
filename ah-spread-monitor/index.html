@@ -47,8 +47,15 @@
       <button id="exportBtn">导出 config.json</button>
       <textarea id="mgExport" rows="6" placeholder="点击上方按钮生成当前品种列表"></textarea>
     </div>
+    <div class="mg-relay">
+      <label>中继网关地址（部署见 relay/README.md）：</label>
+      <input id="mgRelay" placeholder="https://xxx.apigw.tencentcs.com/release/?url=">
+      <button id="saveRelay">保存中继</button>
+      <span id="relayTip" class="hint"></span>
+    </div>
   </section>
 </main>
+<script src="./js/config.js"></script>
 <script src="./js/common.js"></script>
 <script src="./js/main.js"></script>
 </body>
