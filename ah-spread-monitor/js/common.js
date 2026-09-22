@@ -45,9 +45,10 @@ function onlineQuote(sym) {
   });
 }
 function onlineHistory(aCode, hCode) {
-  const end = new Date().toISOString().slice(0, 10);
+  // ⚠️ 东财 kline 接口日期必须是 YYYYMMDD（不带横杠）：带横杠会静默返回空 klines（实测 2026-09-22）
+  const end = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const mk = (sec) => 'https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=' + sec +
-    '&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55&klt=101&fqt=0&beg=2015-01-01&end=' + end;
+    '&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55&klt=101&fqt=0&beg=20150101&end=' + end;
   return Promise.all([
     relayFetch(mk(secidOf(aCode))),
     relayFetch(mk(secidOf(hCode)))
